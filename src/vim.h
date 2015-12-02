@@ -392,7 +392,7 @@
 # endif
 #endif
 
-#define NUMBUFLEN 30	    /* length of a buffer to store a number in ASCII */
+#define NUMBUFLEN 65	/* length of a buffer to store a number in ASCII */
 
 /*
  * Shorthand for unsigned variables. Many systems, but not all, have u_char

@@ -5379,7 +5379,7 @@ do_addsub(command, Prenum1, g_cmd)
     int		col;
     char_u	*buf1;
     char_u	buf2[NUMBUFLEN];
-    int		hex;		/* 'X' or 'x': hex; '0': octal */
+    int		pre;		/* 'X' or 'x': hex; '0': octal; 'B' or 'b': bin */
     static int	hexupper = FALSE;	/* 0xABC */
     unsigned long n;
     unsigned long offset = 0;		/* line offset for Ctrl_V mode */
@@ -5390,6 +5390,7 @@ do_addsub(command, Prenum1, g_cmd)
     int		todel;
     int		dohex;
     int		dooct;
+    int		dobin;
     int		doalp;
     int		firstdigit;
     int		subtract;
@@ -5403,9 +5404,13 @@ do_addsub(command, Prenum1, g_cmd)
     int		did_change = FALSE;
     pos_T	t = curwin->w_cursor;
     int		maxlen = 0;
+    int		pos = 0;
+    int		bit = 0;
+    int		bits = sizeof(unsigned long) * 8;
 
     dohex = (vim_strchr(curbuf->b_p_nf, 'x') != NULL);	/* "heX" */
     dooct = (vim_strchr(curbuf->b_p_nf, 'o') != NULL);	/* "Octal" */
+    dobin = (vim_strchr(curbuf->b_p_nf, 'b') != NULL);	/* "Bin" */
     doalp = (vim_strchr(curbuf->b_p_nf, 'p') != NULL);	/* "alPha" */
 
     /*
@@ -5454,17 +5459,45 @@ do_addsub(command, Prenum1, g_cmd)
 	ptr = ml_get_curline();
 	RLADDSUBFIX(ptr);
 
+        if (dobin)
+	    while (col > 0 && vim_isbdigit(ptr[col]))
+		--col;
+
 	if (dohex)
 	    while (col > 0 && vim_isxdigit(ptr[col]))
 		--col;
-	if (       dohex
+
+	if (       dobin
+		&& dohex
+		&& ! ((col > 0
+		    && (ptr[col] == 'X'
+			|| ptr[col] == 'x')
+		    && ptr[col - 1] == '0'
+		    && vim_isxdigit(ptr[col + 1]))))
+	{
+
+	    /* In case of binary/hexadecimal pattern overlap match, rescan */
+
+	    col = curwin->w_cursor.col;
+
+	    while (col > 0 && vim_isdigit(ptr[col]))
+		col--;
+	}
+
+	if ((       dohex
 		&& col > 0
 		&& (ptr[col] == 'X'
 		    || ptr[col] == 'x')
 		&& ptr[col - 1] == '0'
-		&& vim_isxdigit(ptr[col + 1]))
+		&& vim_isxdigit(ptr[col + 1])) ||
+	    (       dobin
+		&& col > 0
+		&& (ptr[col] == 'B'
+		    || ptr[col] == 'b')
+		&& ptr[col - 1] == '0'
+		&& vim_isbdigit(ptr[col + 1])))
 	{
-	    /* Found hexadecimal number, move to its start. */
+	    /* Found hexadecimal or binary number, move to its start. */
 	    --col;
 	}
 	else
@@ -5609,11 +5642,11 @@ do_addsub(command, Prenum1, g_cmd)
 					: curwin->w_cursor.col - col + 1);
 	    }
 
-	    vim_str2nr(ptr + col, &hex, &length, dooct, dohex, NULL, &n,
+	    vim_str2nr(ptr + col, &pre, &length, dobin, dooct, dohex, NULL, &n,
 								      maxlen);
 
-	    /* ignore leading '-' for hex and octal numbers */
-	    if (hex && negative)
+	    /* ignore leading '-' for hex and octal and bin numbers */
+	    if (pre && negative)
 	    {
 		++col;
 		--length;
@@ -5634,7 +5667,7 @@ do_addsub(command, Prenum1, g_cmd)
 		n += (unsigned long)Prenum1;
 
 	    /* handle wraparound for decimal numbers */
-	    if (!hex)
+	    if (!pre)
 	    {
 		if (subtract)
 		{
@@ -5706,25 +5739,37 @@ do_addsub(command, Prenum1, g_cmd)
 	    {
 		*ptr++ = '-';
 	    }
-	    if (hex)
+	    if (pre)
 	    {
 		*ptr++ = '0';
 		--length;
 	    }
-	    if (hex == 'x' || hex == 'X')
+	    if (pre == 'b' || pre == 'B' || 
+                pre == 'x' || pre == 'X')
 	    {
-		*ptr++ = hex;
+		*ptr++ = pre;
 		--length;
 	    }
 
 	    /*
 	     * Put the number characters in buf2[].
 	     */
-	    if (hex == 0)
+	    if (pre == 'b' || pre == 'B')
+	    {
+		/* leading zeros */
+		for (bit = bits; bit > 0; bit--)
+		    if ((n >> (bit - 1)) & 0x1) break;
+
+		for (pos = 0; bit > 0; bit--)
+		    buf2[pos++] = ((n >> (bit - 1)) & 0x1) ? '1' : '0';
+
+		buf2[pos] = '\0';
+	    }
+	    else if (pre == 0)
 		sprintf((char *)buf2, "%lu", n);
-	    else if (hex == '0')
+	    else if (pre == '0')
 		sprintf((char *)buf2, "%lo", n);
-	    else if (hex && hexupper)
+	    else if (pre && hexupper)
 		sprintf((char *)buf2, "%lX", n);
 	    else
 		sprintf((char *)buf2, "%lx", n);
@@ -5736,7 +5781,7 @@ do_addsub(command, Prenum1, g_cmd)
 	     * Don't do this when
 	     * the result may look like an octal number.
 	     */
-	    if (firstdigit == '0' && !(dooct && hex == 0))
+	    if (firstdigit == '0' && !(dooct && pre == 0))
 		while (length-- > 0)
 		    *ptr++ = '0';
 	    *ptr = NUL;

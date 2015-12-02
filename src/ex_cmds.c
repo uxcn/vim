@@ -365,6 +365,7 @@ ex_sort(eap)
     long	deleted;
     colnr_T	start_col;
     colnr_T	end_col;
+    int		sort_bin;		/* sort on bin number */
     int		sort_oct;		/* sort on octal number */
     int		sort_hex;		/* sort on hex number */
 
@@ -381,7 +382,7 @@ ex_sort(eap)
     if (nrs == NULL)
 	goto sortend;
 
-    sort_abort = sort_ic = sort_rx = sort_nr = sort_oct = sort_hex = 0;
+    sort_abort = sort_ic = sort_rx = sort_nr = sort_bin = sort_oct = sort_hex = 0;
 
     for (p = eap->arg; *p != NUL; ++p)
     {
@@ -393,6 +394,8 @@ ex_sort(eap)
 	    sort_rx = TRUE;
 	else if (*p == 'n')
 	    sort_nr = 2;
+	else if (*p == 'b')
+	    sort_bin = 2;
 	else if (*p == 'o')
 	    sort_oct = 2;
 	else if (*p == 'x')
@@ -439,15 +442,15 @@ ex_sort(eap)
 	}
     }
 
-    /* Can only have one of 'n', 'o' and 'x'. */
-    if (sort_nr + sort_oct + sort_hex > 2)
+    /* Can only have one of 'n', 'b', 'o' and 'x'. */
+    if (sort_nr + sort_bin + sort_oct + sort_hex > 2)
     {
 	EMSG(_(e_invarg));
 	goto sortend;
     }
 
     /* From here on "sort_nr" is used as a flag for any number sorting. */
-    sort_nr += sort_oct + sort_hex;
+    sort_nr += sort_bin + sort_oct + sort_hex;
 
     /*
      * Make an array with all line numbers.  This avoids having to copy all
@@ -491,6 +494,8 @@ ex_sort(eap)
 	    p = s + start_col;
 	    if (sort_hex)
 		s = skiptohex(p);
+	    else if (sort_bin)
+		s = skiptobin(p);
 	    else
 		s = skiptodigit(p);
 	    if (s > p && s[-1] == '-')
@@ -499,7 +504,7 @@ ex_sort(eap)
 		/* empty line should sort before any number */
 		nrs[lnum - eap->line1].start_col_nr = -MAXLNUM;
 	    else
-		vim_str2nr(s, NULL, NULL, sort_oct, sort_hex,
+		vim_str2nr(s, NULL, NULL, sort_bin, sort_oct, sort_hex,
 				  &nrs[lnum - eap->line1].start_col_nr, NULL, 0);
 	    *s2 = c;
 	}

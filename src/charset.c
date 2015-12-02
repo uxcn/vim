@@ -1570,6 +1570,19 @@ skipdigits(q)
 
 #if defined(FEAT_SYN_HL) || defined(FEAT_SPELL) || defined(PROTO)
 /*
+ * skip over binary digits
+ */
+    char_u *
+skipbin(q)
+    char_u	*q;
+{
+    char_u	*p = q;
+
+    while (vim_isbdigit(*p))	/* skip to next non-digit */
+	++p;
+    return p;
+}
+/*
  * skip over digits and hex characters
  */
     char_u *
@@ -1585,6 +1598,19 @@ skiphex(q)
 #endif
 
 #if defined(FEAT_EX_EXTRA) || defined(PROTO)
+/*
+ * skip to bin digit (or NUL after the string)
+ */
+    char_u *
+skiptobin(q)
+    char_u	*q;
+{
+    char_u	*p = q;
+
+    while (*p != NUL && !vim_isbdigit(*p))	/* skip to next digit */
+	++p;
+    return p;
+}
 /*
  * skip to digit (or NUL after the string)
  */
@@ -1639,6 +1665,16 @@ vim_isxdigit(c)
     return (c >= '0' && c <= '9')
 	|| (c >= 'a' && c <= 'f')
 	|| (c >= 'A' && c <= 'F');
+}
+
+/*
+ * Corollary of vim_isdigit and vim_isxdigit() that can handle characters > 0x100.
+ */
+    int
+vim_isbdigit(c)
+    int		c;
+{
+    return (c == '0' || c == '1');
 }
 
 #if defined(FEAT_MBYTE) || defined(PROTO)
@@ -1822,15 +1858,19 @@ vim_isblankline(lbuf)
 
 /*
  * Convert a string into a long and/or unsigned long, taking care of
- * hexadecimal and octal numbers.  Accepts a '-' sign.
- * If "hexp" is not NULL, returns a flag to indicate the type of the number:
+ * hexadecimal, octal, and binary numbers.  Accepts a '-' sign.
+ * If "prep" is not NULL, returns a flag to indicate the type of the number:
  *  0	    decimal
  *  '0'	    octal
+ *  'B'	    bin
+ *  'b'	    bin
  *  'X'	    hex
  *  'x'	    hex
  * If "len" is not NULL, the length of the number in characters is returned.
  * If "nptr" is not NULL, the signed result is returned in it.
  * If "unptr" is not NULL, the unsigned result is returned in it.
+ * If "dobin" is non-zero recognize bin numbers, when > 1 always assume
+ * bin number.
  * If "dooct" is non-zero recognize octal numbers, when > 1 always assume
  * octal number.
  * If "dohex" is non-zero recognize hex numbers, when > 1 always assume
@@ -1838,11 +1878,12 @@ vim_isblankline(lbuf)
  * If maxlen > 0, check at a maximum maxlen chars
  */
     void
-vim_str2nr(start, hexp, len, dooct, dohex, nptr, unptr, maxlen)
+vim_str2nr(start, prep, len, dobin, dooct, dohex, nptr, unptr, maxlen)
     char_u		*start;
-    int			*hexp;	    /* return: type of number 0 = decimal, 'x'
-				       or 'X' is hex, '0' = octal */
+    int			*prep;	    /* return: type of number 0 = decimal, 'x'
+				       or 'X' is hex, '0' = octal, 'b' or 'B' is bin */
     int			*len;	    /* return: detected length of number */
+    int			dobin;	    /* recognize bin number */
     int			dooct;	    /* recognize octal number */
     int			dohex;	    /* recognize hex number */
     long		*nptr;	    /* return: signed result */
@@ -1850,7 +1891,7 @@ vim_str2nr(start, hexp, len, dooct, dohex, nptr, unptr, maxlen)
     int			maxlen;     /* max length of string to check */
 {
     char_u	    *ptr = start;
-    int		    hex = 0;		/* default is decimal */
+    int		    pre = 0;		/* default is decimal */
     int		    negative = FALSE;
     unsigned long   un = 0;
     int		    n;
@@ -1861,17 +1902,20 @@ vim_str2nr(start, hexp, len, dooct, dohex, nptr, unptr, maxlen)
 	++ptr;
     }
 
-    /* Recognize hex and octal. */
+    /* Recognize hex, octal, and bin. */
     if (ptr[0] == '0' && ptr[1] != '8' && ptr[1] != '9'
 					       && (maxlen == 0 || maxlen > 1))
     {
-	hex = ptr[1];
-	if (dohex && (hex == 'X' || hex == 'x') && vim_isxdigit(ptr[2])
+	pre = ptr[1];
+	if (dohex && (pre == 'X' || pre == 'x') && vim_isxdigit(ptr[2])
 					       && (maxlen == 0 || maxlen > 2))
 	    ptr += 2;			/* hexadecimal */
+	else if (dobin && (pre == 'B' || pre == 'b') && vim_isbdigit(ptr[2])
+					       && (maxlen == 0 || maxlen > 2))
+	    ptr += 2;			/* binary */
 	else
 	{
-	    hex = 0;			/* default is decimal */
+	    pre = 0;			/* default is decimal */
 	    if (dooct)
 	    {
 		/* Don't interpret "0", "08" or "0129" as octal. */
@@ -1879,11 +1923,11 @@ vim_str2nr(start, hexp, len, dooct, dohex, nptr, unptr, maxlen)
 		{
 		    if (ptr[n] > '7')
 		    {
-			hex = 0;	/* can't be octal */
+			pre = 0;	/* can't be octal */
 			break;
 		    }
 		    if (ptr[n] >= '0')
-			hex = '0';	/* assume octal */
+			pre = '0';	/* assume octal */
 		    if (n == maxlen)
 			break;
 		}
@@ -1892,10 +1936,23 @@ vim_str2nr(start, hexp, len, dooct, dohex, nptr, unptr, maxlen)
     }
 
     /*
-     * Do the string-to-numeric conversion "manually" to avoid sscanf quirks.
-     */
+    * Do the string-to-numeric conversion "manually" to avoid sscanf quirks.
+    */
     n = 1;
-    if (hex == '0' || dooct > 1)
+    if (pre == 'B' || pre == 'b' || dobin > 1)
+    {
+	/* bin */
+	if (pre != 0)
+	    n += 2;	    /* skip over "0b" */
+	while ('0' <= *ptr && *ptr <= '1')
+	{
+	    un = 2 * un + (unsigned long)(*ptr - '0');
+	    ++ptr;
+	    if (n++ == maxlen)
+		break;
+	}
+    }
+    else if (pre == '0' || dooct > 1)
     {
 	/* octal */
 	while ('0' <= *ptr && *ptr <= '7')
@@ -1906,10 +1963,10 @@ vim_str2nr(start, hexp, len, dooct, dohex, nptr, unptr, maxlen)
 		break;
 	}
     }
-    else if (hex != 0 || dohex > 1)
+    else if (pre != 0 || dohex > 1)
     {
 	/* hex */
-	if (hex != 0)
+	if (pre != 0)
 	    n += 2;	    /* skip over "0x" */
 	while (vim_isxdigit(*ptr))
 	{
@@ -1931,8 +1988,8 @@ vim_str2nr(start, hexp, len, dooct, dohex, nptr, unptr, maxlen)
 	}
     }
 
-    if (hexp != NULL)
-	*hexp = hex;
+    if (prep != NULL)
+	*prep = pre;
     if (len != NULL)
 	*len = (int)(ptr - start);
     if (nptr != NULL)
